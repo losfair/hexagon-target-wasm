@@ -7,7 +7,9 @@ use parity_wasm::elements::ValueType as WasmValueType;
 use parity_wasm::elements::Local as WasmLocal;
 use parity_wasm::elements::Module as WasmModule;
 use parity_wasm::elements::External as WasmExternal;
-use hexagon_vm_core::hybrid::jit::JitProvider;
+use parity_wasm::elements::Internal as WasmInternal;
+use parity_wasm::elements::ImportEntry as WasmImportEntry;
+use parity_wasm::elements::ExportEntry as WasmExportEntry;
 use hexagon_vm_core::hybrid::program_context::CommonProgramContext;
 use hexagon_vm_core::hybrid::function::Function;
 use hexagon_vm_core::hybrid::basic_block::BasicBlock;
@@ -18,50 +20,7 @@ struct WasmExecutorInfo {
     load_global_fn: u32
 }
 
-pub trait WasmExecutor {
-    fn load_module(&self, code: &[u8]) -> Result<usize, ()>;
-    fn execute_module(&self, id: usize, ctx: &CommonProgramContext);
-}
-
-pub struct WasmJitProvider<T: WasmExecutor> {
-    fn_modules: RefCell<Vec<Option<usize>>>,
-    executor: T
-}
-
-impl<T: WasmExecutor> WasmJitProvider<T> {
-    pub fn new(executor: T) -> WasmJitProvider<T> {
-        WasmJitProvider {
-            fn_modules: RefCell::new(Vec::new()),
-            executor: executor
-        }
-    }
-}
-
-impl<T: WasmExecutor> JitProvider for WasmJitProvider<T> {
-    fn invoke_function(&self, ctx: &CommonProgramContext, fn_id: usize) -> bool {
-        let mut fn_modules = self.fn_modules.borrow_mut();
-
-        while fn_modules.len() < ctx.get_program().functions.len() {
-            fn_modules.push(None);
-        }
-
-        if fn_modules[fn_id] == None {
-            let raw_fn = &ctx.get_program().functions[fn_id];
-            let code = compile_function(raw_fn);
-            fn_modules[fn_id] = Some(self.executor.load_module(code.as_slice()).unwrap());
-        }
-
-        let module_id = fn_modules[fn_id].unwrap();
-
-        drop(fn_modules);
-
-        self.executor.execute_module(module_id, ctx);
-
-        true
-    }
-}
-
-fn compile_function(f: &Function) -> Vec<u8> {
+pub fn compile_function(f: &Function) -> Vec<u8> {
     let mut builder = wasm::builder::module();
 
     let info = WasmExecutorInfo {
@@ -70,8 +29,16 @@ fn compile_function(f: &Function) -> Vec<u8> {
     };
 
     builder = builder
-        .import().field("store_global").build()
-        .import().field("load_global").build();
+        .with_import(WasmImportEntry::new(
+            "env".into(),
+            "store_global".into(),
+            WasmExternal::Function(0)
+        ))
+        .with_import(WasmImportEntry::new(
+            "env".into(),
+            "load_global".into(),
+            WasmExternal::Function(0)
+        ));
 
     let mut target_opcodes: Vec<WasmOpcode> = Vec::new();
 
@@ -125,7 +92,11 @@ fn compile_function(f: &Function) -> Vec<u8> {
     // end of loop
     target_opcodes.push(WasmOpcode::End);
 
-    builder = builder.function()
+    // end of function
+    target_opcodes.push(WasmOpcode::End);
+
+    builder = builder
+        .function()
             .signature().build()
             .body()
                 .with_locals({
@@ -138,7 +109,11 @@ fn compile_function(f: &Function) -> Vec<u8> {
                 })
                 .with_opcodes(WasmOpcodes::new(target_opcodes))
             .build()
-        .build();
+        .build()
+        .with_export(WasmExportEntry::new(
+            "main".to_string(),
+            WasmInternal::Function(2)
+        ));
 
     let module: WasmModule = builder.build();
 

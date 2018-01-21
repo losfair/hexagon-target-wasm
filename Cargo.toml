@@ -3,6 +3,15 @@ name = "hexagon-jit-wasm"
 version = "0.1.0"
 authors = ["losfair <zhy20000919@hotmail.com>"]
 
+[lib]
+name = "hexagon_jit_wasm"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "generate_test"
+path = "src/generate_test.rs"
+doc = false
+
 [dependencies]
 hexagon-vm-core = { path = "../hexagon-vm-core" }
 parity-wasm = "0.21"
